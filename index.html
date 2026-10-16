@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2 Player Tower Defense</title>
+<!-- โหลด PeerJS จาก CDN -->
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+  body { background: #12171c; color: #fff; font-family: sans-serif; text-align: center; margin: 0; padding: 20px; }
+  #game-canvas { background: #1c242b; border: 2px solid #5d6a74; margin: 10px auto; display: block; max-width: 100%; }
+  .box { background: #2e3942; padding: 10px; border-radius: 8px; margin: 10px auto; max-width: 400px; }
+  button, input { padding: 8px 12px; margin: 5px; font-size: 16px; border-radius: 4px; border: none; }
+  button { background: #f2a900; color: #1d2329; font-weight: bold; cursor: pointer; }
+  button:active { transform: scale(0.95); }
+  input { background: #fff; color: #000; }
+</style>
+</head>
+<body>
+
+  <h1>🏰 ป้อมคู่กู้โลก (แชร์เงินกันจน)</h1>
+  
+  <div class="box" id="menu">
+    <h3>เลือกโหมดเชื่อมต่อ</h3>
+    <button id="host-btn">สร้างห้อง (Host)</button><br>
+    <input type="text" id="peer-id-input" placeholder="ใส่รหัสห้องของเพื่อนที่นี่">
+    <button id="join-btn">เข้าห้อง (Join)</button>
+    <p id="my-id" style="color: #ffc21a; font-weight: bold;"></p>
+  </div>
+
+  <div class="box">
+    <h2>🪙 เงินส่วนกลาง: <span id="money-display">100</span></h2>
+    <p>สถานะ: <span id="status-text" style="color: #ff5555;">ยังไม่ได้เชื่อมต่อ</span></p>
+    <button id="upgrade-btn">⬆️ อัปเกรดความแรงป้อม (ราคา: 50)</button>
+    <p>เลเวลป้อม: <span id="turret-lvl">1</span> | พลังยิง: <span id="turret-dmg">10</span></p>
+  </div>
+
+  <canvas id="game-canvas" width="400" height="250"></canvas>
+  <button id="shoot-btn" style="font-size: 20px; padding: 15px 30px; background: #ff4757; color: white;">🔥 ยิงศัตรู!</button>
+
+<script>
+let peer, conn;
+let isHost = false;
+let money = 100;
+let turretLvl = 1;
+let turretDmg = 10;
+let enemyHp = 500;
+let maxEnemyHp = 500;
+
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+
+// อัปเดต UI หน้าจอ
+function updateUI() {
+    document.getElementById('money-display').textContent = money;
+    document.getElementById('turret-lvl').textContent = turretLvl;
+    document.getElementById('turret-dmg').textContent = turretDmg;
+    document.getElementById('status-text').textContent = conn && conn.open ? 'เชื่อมต่อกันแล้วสัส!' : 'ยังไม่ได้เชื่อมต่อ';
+    document.getElementById('status-text').style.color = conn && conn.open ? '#4cc58a' : '#ff5555';
+}
+
+// วาดกราฟิกเกมง่ายๆ
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // วาดป้อมฝั่งเรา
+    ctx.fillStyle = '#ffc21a';
+    ctx.fillRect(50, 150, 40, 60);
+    ctx.fillStyle = '#fff';
+    ctx.fillText("ป้อมมึง", 55, 140);
+
+    // วาดป้อมเพื่อน
+    ctx.fillStyle = '#3f9db3';
+    ctx.fillRect(310, 150, 40, 60);
+    ctx.fillStyle = '#fff';
+    ctx.fillText("ป้อมเพื่อน", 310, 140);
+
+    // วาดศัตรูตรงกลาง
+    ctx.fillStyle = '#ff4757';
+    ctx.beginPath();
+    ctx.arc(200, 180, 25, 0, Math.PI * 2);
+    ctx.fill();
+
+    // หลอดเลือดศัตรู
+    ctx.fillStyle = '#333';
+    ctx.fillRect(150, 130, 100, 10);
+    ctx.fillStyle = '#4cc58a';
+    ctx.fillRect(150, 130, 100 * (enemyHp / maxEnemyHp), 10);
+    ctx.fillStyle = '#fff;';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(`HP: ${enemyHp}`, 200, 125);
+}
+
+// 1. กดสร้างห้อง (Host)
+document.getElementById('host-btn').onclick = () => {
+    peer = new Peer();
+    peer.on('open', (id) => {
+        isHost = true;
+        document.getElementById('my-id').textContent = 'รหัสห้องของมึง (ส่งให้เพื่อน): ' + id;
+        document.getElementById('status-text').textContent = 'รอเพื่อนเข้าห้องอยู่...';
+    });
+
+    peer.on('connection', (c) => {
+        conn = c;
+        setupConnection();
+    });
+};
+
+// 2. กดเข้าห้องเพื่อน (Join)
+document.getElementById('join-btn').onclick = () => {
+    const friendId = document.getElementById('peer-id-input').value.trim();
+    if (!friendId) return alert('ใส่วิธีต่อสัส ใส่ไอดีเพื่อนก่อน!');
+    
+    peer = new Peer();
+    peer.on('open', () => {
+        conn = peer.connect(friendId);
+        setupConnection();
+    });
+};
+
+// ตั้งค่าการรับส่งข้อมูลผ่าน PeerJS
+function setupConnection() {
+    conn.on('open', () => {
+        updateUI();
+        alert('เชื่อมต่อสำเร็จ ลุยกันเลยสัส!');
+    });
+
+    conn.on('data', (data) => {
+        // รับข้อมูลซิงค์มาจากอีกเครื่อง
+        if (data.type === 'SYNC') {
+            money = data.money;
+            enemyHp = data.enemyHp;
+            turretLvl = data.turretLvl;
+            turretDmg = data.turretDmg;
+            updateUI();
+            draw();
+        }
+    });
+}
+
+// ฟังก์ชันส่งข้อมูลซิงค์ให้เพื่อน (ถ้าเป็น Host หรือคนทำแอคชั่น)
+function sendState() {
+    if (conn && conn.open) {
+        conn.send({
+            type: 'SYNC',
+            money: money,
+            enemyHp: enemyHp,
+            turretLvl: turretLvl,
+            turretDmg: turretDmg
+        });
+    }
+}
+
+// ปุ่มกดคลิกยิงศัตรู
+document.getElementById('shoot-btn').onclick = () => {
+    enemyHp -= turretDmg;
+    if (enemyHp <= 0) {
+        money += 50; // โบนัสฆ่าศัตรูตาย ได้เงินส่วนกลางเพิ่ม
+        enemyHp = maxEnemyHp;
+        alert('ศัตรูตายห่าแล้ว ได้เงินเพิ่ม 50 🪙 555+');
+    }
+    updateUI();
+    draw();
+    sendState();
+};
+
+// ปุ่มอัปเกรดป้อม (แชร์เงินส่วนกลาง)
+document.getElementById('upgrade-btn').onclick = () => {
+    let cost = turretLvl * 50;
+    if (money >= cost) {
+        money -= cost;
+        turretLvl++;
+        turretDmg += 10;
+        updateUI();
+        draw();
+        sendState();
+    } else {
+        alert('เงินไม่พอเว้ยสัส ไปช่วยกันยิงก่อน!');
+    }
+};
+
+draw();
+updateUI();
+</script>
+
+</body>
+</html>
